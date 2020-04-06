@@ -16,34 +16,35 @@
 package com.josedlpozo.galileo
 
 import android.app.Application
-import android.arch.lifecycle.Lifecycle
-import android.arch.lifecycle.LifecycleObserver
-import android.arch.lifecycle.OnLifecycleEvent
-import android.arch.lifecycle.ProcessLifecycleOwner
 import android.content.Context
 import android.content.Intent
 import android.content.Intent.FLAG_ACTIVITY_NEW_TASK
 import android.hardware.SensorManager
-import com.josedlpozo.galileo.chuck.GalileoChuckInterceptor
-import com.josedlpozo.galileo.chuck.internal.ui.TransactionListView
-import com.josedlpozo.galileo.config.ConfigRepository
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleObserver
+import androidx.lifecycle.OnLifecycleEvent
+import androidx.lifecycle.ProcessLifecycleOwner
+import com.josedlpozo.galileo.common.GalileoApplicationLifeCycle
 import com.josedlpozo.galileo.config.GalileoConfig
 import com.josedlpozo.galileo.config.GalileoConfigBuilder
-import com.josedlpozo.galileo.config.GalileoPlugin
-import com.josedlpozo.galileo.lynx.GalileoLynx
+import com.josedlpozo.galileo.config.GalileoOpenType
+import com.josedlpozo.galileo.floaticon.GalileoFloat
 import com.josedlpozo.galileo.parent.home.HomeActivity
-import com.josedlpozo.galileo.preferator.Preferator
-import com.josedlpozo.galileo.realm.RealmView
+import com.josedlpozo.galileo.parent.preparator.PluginsPreparator
 import com.squareup.seismic.ShakeDetector
-import okhttp3.Interceptor
 
-class Galileo(private val application: Application, config: GalileoConfig = GalileoConfigBuilder().defaultPlugins().build()) : LifecycleObserver {
+class Galileo(
+    private val application: Application,
+    private val config: GalileoConfig = GalileoConfigBuilder().build()
+) : LifecycleObserver {
 
-    init {
-        ProcessLifecycleOwner.get().lifecycle.addObserver(this)
-        ConfigRepository.config = config
+    private val galileoFloat = GalileoFloat {
+        Intent(application, HomeActivity::class.java).apply {
+            flags = FLAG_ACTIVITY_NEW_TASK
+        }.also {
+            application.startActivity(it)
+        }
     }
-
     private val shakeDetector: ShakeDetector = ShakeDetector {
         Intent(application, HomeActivity::class.java).apply {
             flags = FLAG_ACTIVITY_NEW_TASK
@@ -52,17 +53,45 @@ class Galileo(private val application: Application, config: GalileoConfig = Gali
         }
     }
 
+    init {
+        preparePlugins()
+        when (config.openType) {
+            GalileoOpenType.Floating -> initFloatingViews()
+            GalileoOpenType.Shaking -> {
+                ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+                start()
+            }
+            GalileoOpenType.Both -> {
+                ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+                start()
+                initFloatingViews()
+            }
+        }
+    }
+
     private val sensorManager: SensorManager
         get() = application.getSystemService(Context.SENSOR_SERVICE) as SensorManager
 
     @OnLifecycleEvent(Lifecycle.Event.ON_START)
     fun onAppForegrounded() {
-        start()
+        when (config.openType) {
+            GalileoOpenType.Shaking, GalileoOpenType.Both -> {
+                start()
+            }
+        }
     }
 
     @OnLifecycleEvent(Lifecycle.Event.ON_STOP)
     fun onAppBackgrounded() {
-        stop()
+        when (config.openType) {
+            GalileoOpenType.Shaking, GalileoOpenType.Both -> {
+                stop()
+            }
+        }
+    }
+
+    private fun preparePlugins() {
+        PluginsPreparator.prepare(config)
     }
 
     private fun start() {
@@ -73,15 +102,10 @@ class Galileo(private val application: Application, config: GalileoConfig = Gali
         shakeDetector.stop()
     }
 
-    companion object {
-        val interceptor: Interceptor = GalileoChuckInterceptor
-
-        val preferator: GalileoPlugin = { Preferator.view(it) }
-
-        val lynx: GalileoPlugin = { GalileoLynx(it) }
-
-        val chuck: GalileoPlugin = { TransactionListView(it) }
-
-        val realm: GalileoPlugin = { RealmView(it) }
+    private fun initFloatingViews() {
+        val floats = listOf(galileoFloat)
+        application.registerActivityLifecycleCallbacks(GalileoApplicationLifeCycle(floats))
     }
+
+    companion object
 }
